@@ -1,0 +1,6 @@
+rastertotspl
+__pycache__/
+*.tspl
+*.png
+.DS_Store
+test/.vendor.ppd
