@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build (universal arm64 + x86_64)
+        run: |
+          make
+          lipo -archs rastertotspl
+
+      # Munbyn's PPD isn't ours to redistribute, so it comes from a repository
+      # secret holding base64 of the driver's "ITPP130 Label printer.ppd";
+      # test/vendor-ppd.sh checks its hash. Without the secret (e.g. pull
+      # requests from forks) only the build runs.
+      - name: Get the vendor PPD
+        id: ppd
+        env:
+          VENDOR_PPD_B64: ${{ secrets.VENDOR_PPD_B64 }}
+        run: |
+          if [ -z "$VENDOR_PPD_B64" ]; then
+            echo "::warning::VENDOR_PPD_B64 secret isn't available; skipping tests"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            printf '%s' "$VENDOR_PPD_B64" | base64 --decode > test/.vendor.ppd
+            test/vendor-ppd.sh
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Test (vendor parity + behaviour checks)
+        if: steps.ppd.outputs.available == 'true'
+        run: make test

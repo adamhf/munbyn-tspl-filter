@@ -94,7 +94,7 @@ If a job is cancelled or its input ends mid-page, the filter fills the rest of t
 
 ## Tests
 
-All test files are in `test/`.
+All test files are in `test/`. GitHub Actions (`.github/workflows/ci.yml`) builds and runs `make test` on macOS for every push and pull request. It gets Munbyn's PPD from the repository secret `VENDOR_PPD_B64` (base64 of the PPD), because the PPD can't be committed. Without the secret, for example on pull requests from forks, CI only builds.
 
 - **`compare.sh`:** checks the filter's output for every fixture and option set against `expected.sha256`, which holds hashes of the vendor filter's output. Run `compare.sh --regen` to rebuild the hashes from the vendor filter. That needs Rosetta, and the default printer must be the ITPP130 queue, because the vendor filter refuses to run otherwise.
 - **`checks.py`:** tests the deliberate differences: malformed headers, colour spaces, missing PPD, truncation, rotation, copies, and cancel between pages.
