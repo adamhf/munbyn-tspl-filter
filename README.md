@@ -101,3 +101,7 @@ All test files are in `test/`.
 - **`mkfixtures.sh`:** rebuilds every fixture. It runs `mkpdf.py` (test PDFs), `cupsfilter` with the vendor PPD (rasters from the real macOS pipeline), and `synth.py`. `synth.py` makes `2p.ras` (two pages), `ramp.ras` (grey ramp to find the threshold) and `nc3.ras` (`NumCopies` 3).
 - **`vendor-ppd.sh`:** finds an unmodified copy of Munbyn's PPD (driver v1.5.8) on the Mac. It looks in the installed driver or `install.sh`'s backup, and checks the copy by its hash. The PPD isn't ours to redistribute, so it isn't in the repo. To use another copy, set `VENDOR_PPD=path`.
 - **`hdr.py` / `tspl2png.py`:** `hdr.py` prints the text part of a TSPL job. `tspl2png.py` renders its first bitmap as a PNG.
+
+## License
+
+MIT; see [LICENSE](LICENSE). Munbyn's driver, PPD and filter are not part of this project and are not covered by this licence.
