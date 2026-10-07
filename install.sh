@@ -42,13 +42,38 @@ trap 'rm -rf "$WORK"' EXIT
 
 # The vendor's "3.00x2.00" label is 212 x 142 pt (74.8 x 50 mm). Real 3x2"
 # labels are 216 x 144 pt, so prints came out 1.4 mm narrow and cropped.
+#
+# The native PPD also gets a Threshold option (the vendor filter has none and
+# always uses 201): 128 keeps small QR codes readable. It is added after
+# Darkness once; a queue that already has it keeps its chosen default.
+add_threshold() {
+  awk '
+    /^\*OpenUI \*Threshold\// { have = 1 }
+    { lines[++n] = $0 }
+    END {
+      for (i = 1; i <= n; i++) {
+        print lines[i]
+        if (!have && lines[i] ~ /^\*CloseUI: \*Darkness/) {
+          print "*OpenUI *Threshold/Grey Threshold: PickOne"
+          print "*OrderDependency: 20 AnySetup *Threshold"
+          print "*DefaultThreshold: 128"
+          print "*Threshold 128/50% (sharp QR codes): \"\""
+          print "*Threshold 160/63%: \"\""
+          print "*Threshold 201/79% (vendor driver): \"\""
+          print "*CloseUI: *Threshold"
+        }
+      }
+    }'
+}
 to_native() {
   sed -E -e "s|^\*cupsFilter:.*|*cupsFilter: \"application/vnd.cups-raster 0 $NEW\"|" \
-         -e '/^\*(PageSize|PageRegion|ImageableArea|PaperDimension) w216h144\//s/212 142/216 144/'
+         -e '/^\*(PageSize|PageRegion|ImageableArea|PaperDimension) w216h144\//s/212 142/216 144/' |
+    add_threshold
 }
 to_vendor() {
   sed -E -e "s|^\*cupsFilter:.*|*cupsFilter: \"application/vnd.cups-raster 0 $OLD\"|" \
-         -e '/^\*(PageSize|PageRegion|ImageableArea|PaperDimension) w216h144\//s/216 144/212 142/'
+         -e '/^\*(PageSize|PageRegion|ImageableArea|PaperDimension) w216h144\//s/216 144/212 142/' \
+         -e '/^\*OpenUI \*Threshold\//,/^\*CloseUI: \*Threshold/d'
 }
 
 have_queue=0

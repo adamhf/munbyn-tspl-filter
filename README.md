@@ -97,6 +97,7 @@ Run these checks before `install.sh`: after it, that file is the patched copy.
 - **"Software Incompatible" or "Bad CPU type" in Printers & Scanners:**
   - Check the filter: `grep cupsFilter /private/etc/cups/ppd/Printer_ITPP130.ppd`. If it ends in `rastertolabel`, the queue still uses Munbyn's Intel-only filter, so run `sudo ./install.sh`.
   - If it already ends in `rastertotspl`, the state left over from the old filter can stick. It survives prints and CUPS restarts. Remove the printer in System Settings (or run `lpadmin -x Printer_ITPP130`), add it again, then repeat steps 3 and 4.
+- **A QR code or fine detail won't scan, or looks smudged:** check the queue uses the 50% threshold (`lpoptions -p Printer_ITPP130 -l | grep Threshold` should show `*128`), then lower `Darkness`, for example `lpadmin -p Printer_ITPP130 -o Darkness=6`. Higher darkness spreads each dot. Export label images at 203 dpi where the app allows it, so CUPS doesn't have to scale them.
 - **A print runs across several labels:** the job used a bigger page size than the loaded labels, usually the 4×6 default. Set the default size (step 4), or pick the label size in the print dialog.
 - **"Printer drivers are deprecated and will stop working in a future version of CUPS":** CUPS prints this for every PPD-based driver. It doesn't affect printing.
 - **CUPS log:** `/private/var/log/cups/error_log`. Filter problems appear as `ERROR:` lines.
@@ -108,6 +109,7 @@ Run these checks before `install.sh`: after it, that file is the patched copy.
 3. Replaces both vendor PPDs with one that:
    - uses the new filter
    - has a true-size 3×2" label (see below)
+   - adds a Grey Threshold option, default 128 (see "Differences"); a re-install keeps the queue's chosen value
    - keeps the queue's current defaults
 
    Re-adding the printer in System Settings then gives the same setup.
@@ -124,6 +126,7 @@ The printer also starts printing about 1 mm to the left of the label edge. The q
 ## Differences from the vendor filter
 
 - **Rotate 90/270:** the vendor sends `DIRECTION 2,0` / `DIRECTION 3,0`, which TSPL doesn't define (it only accepts 0 or 1). This filter rotates the bitmap itself, with 90 meaning clockwise, and sends `DIRECTION 0,0`. A page that is wider than the print head once rotated is rejected.
+- **Grey threshold:** the vendor filter prints every grey value below 201 as black. That includes the light-grey edge pixels CUPS adds when it scales an image, so black areas grow by about a dot on each side. Add the printer's heat bleed and the white gaps in a small QR code close up: a 14 mm Bambuddy spool-label QR stopped scanning. The installed PPD has a **Grey Threshold** option (`Threshold`), with 128 (50%) as the default. Choose 201 for the vendor's output. Without the option in the PPD, `-o Threshold=N` (1–255) sets it, and if nothing sets it the filter uses 201, so `make test` still compares byte for byte with the vendor.
 - **Other colour formats:** sGray (SW) and K rasters print with the right polarity, and 1-bit rasters work. Any other colour space is rejected.
 - **Bad input fails the job:** the job fails (`ERROR:` plus exit 1) instead of printing something wrong when:
   - a raster header is malformed or oversized
@@ -142,7 +145,7 @@ For each page:
 3. `BITMAP 0,0,wb,h,1,` followed by the image data.
 4. `PRINT 1,1`.
 
-The image is sent at 1 bit per dot, with 1 meaning white. Each grey value below 201 prints black. The header comment in `rastertotspl.c` maps each PPD option to its command.
+The image is sent at 1 bit per dot, with 1 meaning white. Each grey value below the threshold (128 with the installed PPD, 201 for the vendor) prints black. The header comment in `rastertotspl.c` maps each PPD option to its command.
 
 If a job is cancelled or its input ends mid-page, the filter fills the rest of the bitmap with white and skips `PRINT`, so the printer doesn't feed a label. The NUL preamble only helps when the previous bitmap is at most 1 KB short. If CUPS kills a job outright in the middle of a bitmap, power-cycle the printer before the next job.
 

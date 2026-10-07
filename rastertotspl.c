@@ -21,7 +21,8 @@
  *   SETC PAUSEKEY ON
  *   SETC WATERMARK OFF
  *   CLS
- *   BITMAP 0,0,wb,h,1,<data>\n      1 bit/dot, MSB first, 1 = white
+ *   BITMAP 0,0,wb,h,1,<data>\n      1 bit/dot, MSB first, 1 = white; a grey
+ *                                   value below Threshold prints black
  *   PRINT 1,1
  *
  * Copies are always 1: the PPD sets cupsManualCopies so CUPS has already
@@ -33,6 +34,13 @@
  *     DIRECTION 0 is sent.
  *   - sGray (SW) and K rasters print with the right polarity, and 1-bit
  *     rasters are supported. Other colour spaces are rejected.
+ *   - Threshold: the grey level below which a pixel prints black. The vendor
+ *     filter always uses 201, which also blackens the light-grey edge pixels
+ *     CUPS adds when it scales an image, so every black edge grows by about a
+ *     dot. With heat bleed on top, that closes the gaps in a small QR code.
+ *     The option comes from the PPD (install.sh adds it, default 128) or from
+ *     -o Threshold=N (1-255); when neither sets it the filter uses 201, so
+ *     output still matches the vendor's.
  *   - Malformed or oversized raster headers, a missing PPD, truncated input
  *     and write errors fail the job (ERROR + exit 1) instead of printing
  *     something wrong or reading past buffers.
@@ -51,7 +59,7 @@
 #include <unistd.h>
 
 #define PREAMBLE_NULS   1024
-#define WHITE_THRESHOLD 201   /* luminance values >= this print white */
+#define VENDOR_THRESHOLD 201  /* vendor filter: luminance values >= this print white */
 #define DOTS_PER_MM     8
 #define MAX_WIDTH       1024  /* dots; PPD MaxMediaWidth 294 pt = 829 dots at 203 dpi */
 #define MAX_HEIGHT      16384 /* dots; PPD MaxMediaHeight 5670 pt = 15988 dots */
@@ -85,6 +93,24 @@ choice_str(ppd_file_t *ppd, const char *keyword)
   ppd_choice_t *c = ppdFindMarkedChoice(ppd, keyword);
 
   return c ? c->choice : NULL;
+}
+
+/*
+ * Grey threshold: the PPD's Threshold choice, else -o Threshold=N (for a PPD
+ * without the option), else the vendor's 201. -1 if the value is invalid.
+ */
+static int
+get_threshold(ppd_file_t *ppd, int num_options, cups_option_t *options)
+{
+  ppd_choice_t *c = ppdFindMarkedChoice(ppd, "Threshold");
+  const char   *v = c ? c->choice : cupsGetOption("Threshold", num_options, options);
+  char         *end;
+  long          t;
+
+  if (!v)
+    return VENDOR_THRESHOLD;
+  t = strtol(v, &end, 10);
+  return (end == v || *end || t < 1 || t > 255) ? -1 : (int)t;
 }
 
 /* realloc that frees the old block on failure. */
@@ -164,7 +190,7 @@ start_page(ppd_file_t *ppd, unsigned width, unsigned height, int direction)
 
 /* Pack one raster line into TSPL bits (1 = white), padding bits white. */
 static void
-pack_line(const cups_page_header2_t *h, const unsigned char *src, unsigned char *dst)
+pack_line(const cups_page_header2_t *h, const unsigned char *src, unsigned char *dst, int threshold)
 {
   int      ink = h->cupsColorSpace == CUPS_CSPACE_K;   /* K: high = black; W/SW: high = white */
   unsigned x;
@@ -177,7 +203,7 @@ pack_line(const cups_page_header2_t *h, const unsigned char *src, unsigned char 
     if (h->cupsBitsPerPixel == 1)
       black = ((src[x >> 3] >> (7 - (x & 7))) & 1) == ink;
     else
-      black = (ink ? 255 - src[x] : src[x]) < WHITE_THRESHOLD;
+      black = (ink ? 255 - src[x] : src[x]) < threshold;
 
     if (black)
       dst[x >> 3] &= ~(0x80 >> (x & 7));
@@ -213,7 +239,7 @@ main(int argc, char *argv[])
   cups_option_t      *options = NULL;
   int                 num_options;
   int                 page = 0, status = 0;
-  int                 rotate, rotated, direction;
+  int                 rotate, rotated, direction, threshold;
   unsigned char      *line = NULL, *out = NULL, *pagebuf = NULL;
   struct sigaction    action;
 
@@ -248,6 +274,12 @@ main(int argc, char *argv[])
   ppdMarkDefaults(ppd);
   num_options = cupsParseOptions(argv[5], 0, &options);
   cupsMarkOptions(ppd, num_options, options);
+
+  if ((threshold = get_threshold(ppd, num_options, options)) < 0)
+  {
+    fputs("ERROR: Threshold must be a whole number from 1 to 255.\n", stderr);
+    return 1;
+  }
 
   rotate    = choice_int(ppd, "Rotate", 0);   /* PPD choices: 0, 1 = 180, 2 = 90, 3 = 270 */
   rotated   = rotate == 2 || rotate == 3;
@@ -291,7 +323,7 @@ main(int argc, char *argv[])
       {
         if (canceled || cupsRasterReadPixels(ras, line, header.cupsBytesPerLine) < 1)
           break;
-        pack_line(&header, line, out + (size_t)y * wb);
+        pack_line(&header, line, out + (size_t)y * wb, threshold);
       }
 
       if (y < header.cupsHeight)
@@ -316,7 +348,7 @@ main(int argc, char *argv[])
       {
         if (canceled || cupsRasterReadPixels(ras, line, header.cupsBytesPerLine) < 1)
           break;
-        pack_line(&header, line, out);
+        pack_line(&header, line, out, threshold);
         fwrite(out, 1, wb, stdout);
       }
 

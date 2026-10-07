@@ -1,6 +1,6 @@
 """Behaviour tests for rastertotspl where it deliberately differs from the
 vendor filter: malformed input, colour spaces, missing PPD, truncation,
-rotation, cancel and copies. Run from the test directory: python3 checks.py
+rotation, cancel, copies and the grey threshold. Run from the test directory: python3 checks.py
 """
 import os, re, signal, struct, subprocess, sys, time
 
@@ -147,6 +147,39 @@ err = p.stderr.read().decode()
 p.wait()
 check("cancel between pages stops before page 2",
       got.count(b"BITMAP") == 1 and "PAGE: 2" not in err, f"bitmaps={got.count(b'BITMAP')}")
+
+# --- grey threshold: ramp.ras rows 0-255 are solid grey levels 0-255
+ramp = open("ramp.ras", "rb").read()
+
+
+def black_levels(out):
+    """Grey levels (ramp rows 0-255) that printed as solid black rows."""
+    wb, h, data = bitmaps(out)[0]
+    return {r for r in range(256) if all(b == 0 for b in data[r * wb:(r + 1) * wb - 1])}
+
+
+rc, out, _ = run(ramp)
+check("no Threshold: vendor's 201", rc == 0 and black_levels(out) == set(range(201)))
+rc, out128, _ = run(ramp, "Threshold=128")
+check("-o Threshold=128 (PPD without the option)", rc == 0 and black_levels(out128) == set(range(128)))
+check("-o Threshold=201 equals the default", run(ramp, "Threshold=201")[1] == out)
+
+ppd_t = os.path.join(os.environ.get("TMPDIR", "/tmp"), "rastertotspl-threshold.ppd")
+with open(PPD) as f:
+    text = f.read()
+block = ("*OpenUI *Threshold/Grey Threshold: PickOne\n*OrderDependency: 20 AnySetup *Threshold\n"
+         "*DefaultThreshold: 128\n*Threshold 128/50%: \"\"\n*Threshold 201/79%: \"\"\n*CloseUI: *Threshold\n")
+with open(ppd_t, "w") as f:
+    f.write(text.replace("*CloseUI: *Darkness\n", "*CloseUI: *Darkness\n" + block, 1))
+rc, out, _ = run(ramp, ppd=ppd_t)
+check("PPD DefaultThreshold 128", rc == 0 and out == out128)
+rc, out, _ = run(ramp, "Threshold=201", ppd=ppd_t)
+check("-o picks the PPD's Threshold choice", rc == 0 and black_levels(out) == set(range(201)))
+os.unlink(ppd_t)
+
+for bad_t in ("0", "256", "abc", "12x"):
+    rc, out, err = run(small, f"Threshold={bad_t}")
+    check(f"rejects Threshold={bad_t}", rc == 1 and "ERROR:" in err and not out, f"rc={rc}")
 
 print("checks:", "all passed" if not failures else f"{failures} failed")
 sys.exit(1 if failures else 0)
